@@ -265,8 +265,10 @@ class NeoppRunner(DefaultRunner):
 
         previous_cfg_scale = self.model.cfg_scale
         previous_cfg_interval = self.model.cfg_interval
+        previous_t_eps = self.model.post_infer.t_eps
         self.model.cfg_scale = 1.0
         self.model.cfg_interval = (-1, 2)
+        self.model.post_infer.t_eps = rl_config.t_eps
         self.scheduler.enable_rl(rl_config)
         try:
             self.input_info = input_info
@@ -288,6 +290,7 @@ class NeoppRunner(DefaultRunner):
             self.scheduler.disable_rl()
             self.model.cfg_scale = previous_cfg_scale
             self.model.cfg_interval = previous_cfg_interval
+            self.model.post_infer.t_eps = previous_t_eps
 
     def process_images_after_vae_decoder(self):
         image = self._denorm(self.scheduler.image_prediction.float())

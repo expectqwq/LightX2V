@@ -37,6 +37,7 @@ def select_sde_indices(total_steps: int, window_start: int, window_end: int, sel
 @dataclass(frozen=True)
 class SdeRolloutConfig:
     noise_level: float = 0.7
+    t_eps: float = 0.02
     window_start: int = 0
     window_end: int | None = None
     selected_steps: int | None = None
@@ -45,6 +46,8 @@ class SdeRolloutConfig:
     def resolve_indices(self, total_steps: int) -> tuple[int, ...]:
         if not math.isfinite(self.noise_level) or self.noise_level <= 0:
             raise ValueError("noise_level must be a positive finite value")
+        if not math.isfinite(self.t_eps) or not 0 < self.t_eps < 1:
+            raise ValueError("t_eps must lie inside (0, 1)")
         if self.indices is not None:
             indices = tuple(int(index) for index in self.indices)
             if not indices or len(indices) != len(set(indices)):

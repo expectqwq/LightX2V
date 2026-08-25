@@ -10,6 +10,10 @@ from lightx2v.rl.trace_store import TraceStore
 
 
 class NeoPPSdeTest(unittest.TestCase):
+    def test_invalid_t_eps_is_rejected(self):
+        with self.assertRaises(ValueError):
+            SdeRolloutConfig(t_eps=0.0).resolve_indices(4)
+
     def test_zero_noise_mean_is_official_euler_step(self):
         sample = torch.randn(2, 3, 4)
         velocity = torch.randn_like(sample)
