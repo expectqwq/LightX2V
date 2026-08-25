@@ -58,9 +58,7 @@ class NeoppModel(BaseTransformerModel):
 
         v_pred = self._infer_t2i_i2i(inputs, pre_infer_out)
 
-        t = self.scheduler.timesteps[self.scheduler.step_index]
-        t_next = self.scheduler.timesteps[self.scheduler.step_index + 1]
-        z = pre_infer_out.z + (t_next - t) * v_pred
+        z = self.scheduler.advance(pre_infer_out.z, v_pred)
         self.scheduler.image_prediction = self.unpatchify(
             z,
             self.patch_size * self.merge_size,

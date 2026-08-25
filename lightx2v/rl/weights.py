@@ -1,0 +1,63 @@
+"""Strict in-place NeoPP weight updates and closure receipts."""
+
+from __future__ import annotations
+
+import hashlib
+from collections.abc import Iterable, Mapping
+
+import torch
+
+
+def tensor_checksum(tensor: torch.Tensor) -> str:
+    value = tensor.detach().contiguous().cpu()
+    return hashlib.sha256(value.view(torch.uint8).numpy().tobytes()).hexdigest()
+
+
+def model_state(model) -> dict[str, torch.Tensor]:
+    state: dict[str, torch.Tensor] = {}
+    model.pre_weight.state_dict(state)
+    model.transformer_weights.state_dict(state)
+    if hasattr(model, "post_weight"):
+        model.post_weight.state_dict(state)
+    return {name: tensor for name, tensor in state.items() if isinstance(tensor, torch.Tensor)}
+
+
+def closure(model) -> dict[str, dict[str, object]]:
+    return {
+        name: {"shape": list(tensor.shape), "dtype": str(tensor.dtype), "checksum": tensor_checksum(tensor)}
+        for name, tensor in sorted(model_state(model).items())
+    }
+
+
+def update_weights(model, tensors: Mapping[str, torch.Tensor] | Iterable[tuple[str, torch.Tensor]], strict: bool = False) -> dict[str, object]:
+    incoming = dict(tensors)
+    current = model_state(model)
+    unknown = sorted(set(incoming) - set(current))
+    if unknown:
+        raise KeyError(f"unknown NeoPP tensors: {unknown[:5]}")
+    if strict:
+        missing = sorted(set(current) - set(incoming))
+        if missing:
+            raise KeyError(f"missing NeoPP tensors: {missing[:5]}")
+    updated: list[str] = []
+    with torch.no_grad():
+        for name, source in incoming.items():
+            target = current[name]
+            if tuple(source.shape) != tuple(target.shape):
+                raise ValueError(f"shape mismatch for {name}: {tuple(source.shape)} != {tuple(target.shape)}")
+            if source.dtype != target.dtype:
+                raise ValueError(f"dtype mismatch for {name}: {source.dtype} != {target.dtype}")
+            target.copy_(source.to(target.device), non_blocking=True)
+            updated.append(name)
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    # NeoPP MoE keeps fused expert stacks derived from the source tensors.
+    for block in getattr(model.transformer_weights, "blocks", []):
+        mlp = getattr(block, "mlp_mot_gen", None)
+        if mlp is not None and hasattr(mlp, "_build_flashinfer_weights"):
+            mlp._build_flashinfer_weights()
+    return {
+        "updated": sorted(updated),
+        "checksums": {name: tensor_checksum(current[name]) for name in sorted(updated)},
+        "closure_size": len(current),
+    }

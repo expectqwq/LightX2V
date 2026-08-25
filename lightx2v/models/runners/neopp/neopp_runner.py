@@ -14,6 +14,7 @@ from lightx2v.utils.profiler import *
 from lightx2v.utils.registry_factory import RUNNER_REGISTER
 from lightx2v.utils.utils import *
 from lightx2v_platform.base.global_var import AI_DEVICE
+from lightx2v.rl.sde import SdeRolloutConfig, SdeTrace
 
 
 @RUNNER_REGISTER("neopp")
@@ -254,6 +255,39 @@ class NeoppRunner(DefaultRunner):
         else:
             gen_result = self.process_images_after_vae_decoder()
         return gen_result
+
+    def run_pipeline_rl(self, input_info, rl_config: SdeRolloutConfig):
+        """Run the official pipeline with CFG disabled and selected SDE steps.
+
+        The caller restores normal inference parameters in a ``finally`` block;
+        this method only owns one rollout and never changes ``run_pipeline``.
+        """
+
+        previous_cfg_scale = self.model.cfg_scale
+        previous_cfg_interval = self.model.cfg_interval
+        self.model.cfg_scale = 1.0
+        self.model.cfg_interval = (-1, 2)
+        self.scheduler.enable_rl(rl_config)
+        try:
+            self.input_info = input_info
+            self.inputs = self.run_input_encoder()
+            self.init_run()
+            final_latent = None
+            for step_index in range(self.scheduler.infer_steps):
+                self.scheduler.step_pre(step_index)
+                final_latent = self.model.infer(self.inputs)
+                self.scheduler.step_post()
+            if self.config.get("save_result_for_debug", True):
+                result = self.process_images_after_vae_decoder_for_debug()
+            else:
+                result = self.process_images_after_vae_decoder()
+            trace = self.scheduler.finish_rl(final_latent)
+            return result, trace
+        finally:
+            self.clear_kvcache()
+            self.scheduler.disable_rl()
+            self.model.cfg_scale = previous_cfg_scale
+            self.model.cfg_interval = previous_cfg_interval
 
     def process_images_after_vae_decoder(self):
         image = self._denorm(self.scheduler.image_prediction.float())

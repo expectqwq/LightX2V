@@ -7,6 +7,8 @@ from loguru import logger
 from lightx2v.models.schedulers.scheduler import BaseScheduler
 from lightx2v_platform.base.global_var import AI_DEVICE
 
+from lightx2v.rl.sde import HybridSdeState, SdeRolloutConfig, SdeTrace
+
 
 class NeoppMoeScheduler(BaseScheduler):
     def __init__(self, config):
@@ -19,10 +21,19 @@ class NeoppMoeScheduler(BaseScheduler):
         self.noise_scale_max_value = self.config.get("noise_scale_max_value", 8.0)
         self.patch_size = self.config.get("patch_size", 16)
         self.merge_size = 2
+        self._rl_config: SdeRolloutConfig | None = None
+        self._rl_state: HybridSdeState | None = None
 
     def prepare(self, seed, latent_shape, image_encoder_output=None):
         self.prepare_latents(seed, latent_shape)
         self.set_timesteps(self.infer_steps, device=AI_DEVICE, shift=self.timestep_shift)
+        if self._rl_config is not None:
+            self._rl_state = HybridSdeState(
+                self._rl_config,
+                self.timesteps,
+                seed,
+                self.image_prediction.device,
+            )
 
     def prepare_latents(self, seed, latent_shape, dtype=torch.bfloat16):
         self.grid_h = latent_shape[2] // self.patch_size
@@ -90,3 +101,23 @@ class NeoppMoeScheduler(BaseScheduler):
 
     def step_post(self):
         pass
+
+    def enable_rl(self, config: SdeRolloutConfig) -> None:
+        self._rl_config = config
+        self._rl_state = None
+
+    def disable_rl(self) -> None:
+        self._rl_config = None
+        self._rl_state = None
+
+    def advance(self, sample: torch.Tensor, velocity: torch.Tensor) -> torch.Tensor:
+        t = self.timesteps[self.step_index]
+        t_next = self.timesteps[self.step_index + 1]
+        if self._rl_state is None:
+            return sample + (t_next - t) * velocity
+        return self._rl_state.advance(sample, velocity, t, t_next, self.step_index)
+
+    def finish_rl(self, final_latent: torch.Tensor) -> SdeTrace:
+        if self._rl_state is None:
+            raise RuntimeError("RL trace requested outside an RL generation")
+        return self._rl_state.finish(final_latent)

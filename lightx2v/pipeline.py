@@ -39,6 +39,9 @@ from lightx2v.utils.registry_factory import RUNNER_REGISTER
 from lightx2v.utils.set_config import set_config, set_parallel_config
 from lightx2v.utils.utils import seed_all, validate_config_paths
 from lightx2v_platform.registry_factory import PLATFORM_DEVICE_REGISTER
+from lightx2v.rl.sde import SdeRolloutConfig
+from lightx2v.rl.weights import closure as weight_closure
+from lightx2v.rl.weights import update_weights as update_model_weights
 
 
 def dict_like(cls):
@@ -467,6 +470,57 @@ class LightX2VPipeline:
         logger.info("Generated successfully!")
         logger.info(f"Saved in {save_result_path}")
         return gen_result
+
+    @torch.no_grad()
+    def generate_rl(
+        self,
+        *,
+        rl_config: SdeRolloutConfig | dict,
+        seed=42,
+        prompt="",
+        negative_prompt="",
+        save_result_path="lightx2v_gen_result.png",
+        task=None,
+        image_path=None,
+        target_shape=[],
+        return_result_tensor=False,
+    ):
+        """Generate one NeoPP image action and return its policy trace.
+
+        This is intentionally separate from :meth:`generate`; callers that do
+        not request RL retain the official ODE/CFG implementation unchanged.
+        """
+
+        if self.model_cls != "neopp":
+            raise ValueError("RL image traces are currently supported only by NeoPP")
+        config = rl_config if isinstance(rl_config, SdeRolloutConfig) else SdeRolloutConfig(**rl_config)
+        self.seed = seed
+        self.image_path = image_path
+        self.prompt = prompt
+        self.negative_prompt = negative_prompt
+        self.save_result_path = save_result_path
+        self.return_result_tensor = return_result_tensor
+        self.target_shape = target_shape
+        if task is not None:
+            self.task = task
+            self.modify_config({"task": self.task})
+        input_info = init_empty_input_info(self.task, self.support_tasks)
+        if self.seed is not None:
+            seed_all(self.seed)
+        update_input_info_from_dict(input_info, self)
+        return self.runner.run_pipeline_rl(input_info, config)
+
+    def rl_weight_closure(self):
+        if self.model_cls != "neopp":
+            raise ValueError("online RL updates are currently supported only by NeoPP")
+        return weight_closure(self.runner.model)
+
+    def update_rl_weights(self, tensors, *, strict=False):
+        if self.model_cls != "neopp":
+            raise ValueError("online RL updates are currently supported only by NeoPP")
+        receipt = update_model_weights(self.runner.model, tensors, strict=strict)
+        self.runner.clear_kvcache()
+        return receipt
 
     def _init_runner(self, config):
         torch.set_grad_enabled(False)
