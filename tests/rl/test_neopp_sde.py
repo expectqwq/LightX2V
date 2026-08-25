@@ -1,6 +1,11 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
+
+# These tests exercise the rollout math and trace store on CPU.  Keep the
+# production CUDA check intact while making the test entry point self-contained.
+os.environ.setdefault("SKIP_PLATFORM_CHECK", "True")
 
 import torch
 from safetensors.torch import load_file
