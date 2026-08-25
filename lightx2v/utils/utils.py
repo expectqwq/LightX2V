@@ -27,6 +27,11 @@ def is_main_process():
 
 
 def seed_all(seed):
+    # LightLLM transports image seeds through a signed C integer, while
+    # NumPy's legacy RNG accepts the full uint32 domain.  Canonicalize at the
+    # RNG boundary so either signed or unsigned representations are valid and
+    # interleaved image-index offsets cannot escape NumPy's accepted range.
+    seed = int(seed) % (2**32)
     random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
     np.random.seed(seed)
