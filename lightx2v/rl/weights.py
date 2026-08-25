@@ -33,7 +33,7 @@ def update_weights(model, tensors: Mapping[str, torch.Tensor] | Iterable[tuple[s
     incoming = dict(tensors)
     current = model_state(model)
     unknown = sorted(set(incoming) - set(current))
-    if unknown:
+    if unknown and strict:
         raise KeyError(f"unknown NeoPP tensors: {unknown[:5]}")
     if strict:
         missing = sorted(set(current) - set(incoming))
@@ -42,6 +42,8 @@ def update_weights(model, tensors: Mapping[str, torch.Tensor] | Iterable[tuple[s
     updated: list[str] = []
     with torch.no_grad():
         for name, source in incoming.items():
+            if name not in current:
+                continue
             target = current[name]
             if tuple(source.shape) != tuple(target.shape):
                 raise ValueError(f"shape mismatch for {name}: {tuple(source.shape)} != {tuple(target.shape)}")
@@ -58,6 +60,7 @@ def update_weights(model, tensors: Mapping[str, torch.Tensor] | Iterable[tuple[s
             mlp._build_flashinfer_weights()
     return {
         "updated": sorted(updated),
+        "ignored": unknown,
         "checksums": {name: tensor_checksum(current[name]) for name in sorted(updated)},
         "closure_size": len(current),
     }

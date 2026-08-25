@@ -496,11 +496,20 @@ class LightX2VPipeline:
         config = rl_config if isinstance(rl_config, SdeRolloutConfig) else SdeRolloutConfig(**rl_config)
         self.seed = seed
         self.image_path = image_path
+        self.action_path = None
+        self.video_path = None
+        self.last_frame_path = None
+        self.audio_path = None
+        self.src_ref_images = None
+        self.src_video = None
+        self.src_mask = None
         self.prompt = prompt
         self.negative_prompt = negative_prompt
         self.save_result_path = save_result_path
         self.return_result_tensor = return_result_tensor
         self.target_shape = target_shape
+        self.image_strength = None
+        self.image_frame_idx = None
         if task is not None:
             self.task = task
             self.modify_config({"task": self.task})

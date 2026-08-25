@@ -158,14 +158,14 @@ class HybridSdeState:
 
     def advance(self, sample: torch.Tensor, velocity: torch.Tensor, t: torch.Tensor, t_next: torch.Tensor, index: int) -> torch.Tensor:
         if index not in self.indices:
-            return sample.float() + (t_next.float() - t.float()) * velocity.float()
+            return (sample.float() + (t_next.float() - t.float()) * velocity.float()).to(sample.dtype)
         mean, scale = transition(velocity, sample, t, t_next, self.sigma_max, self.noise_level)
         noise = torch.randn(mean.shape, generator=self.generator, device=mean.device, dtype=torch.float32)
-        next_sample = mean + scale * noise
+        next_sample = (mean + scale * noise).to(sample.dtype)
         self.trace.samples.append(sample.float().detach())
         self.trace.next_samples.append(next_sample.detach())
         self.trace.old_means.append(mean.detach())
-        self.trace.old_log_probs.append(recompute_log_prob(next_sample, mean, scale).detach())
+        self.trace.old_log_probs.append(recompute_log_prob(next_sample.float(), mean, scale).detach())
         self.trace.timesteps.append(t.float().detach())
         self.trace.next_timesteps.append(t_next.float().detach())
         self.trace.scales.append(scale.expand_as(mean).detach())
