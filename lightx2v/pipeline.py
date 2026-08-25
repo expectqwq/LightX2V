@@ -1,3 +1,4 @@
+import importlib
 import json
 import os
 
@@ -10,30 +11,6 @@ import torch
 import torch.distributed as dist
 from loguru import logger
 
-try:
-    from lightx2v.models.runners.flux2.flux2_runner import Flux2DevRunner, Flux2KleinRunner  # noqa: F401
-except (ImportError, ModuleNotFoundError) as e:
-    logger.warning(f"Flux2 runners not available: {e}")
-from lightx2v.models.runners.hunyuan_video.hunyuan_video_15_runner import HunyuanVideo15Runner  # noqa: F401
-from lightx2v.models.runners.longcat_image.longcat_image_runner import LongCatImageRunner  # noqa: F401
-from lightx2v.models.runners.ltx2.ltx2_runner import LTX2Runner  # noqa: F401
-from lightx2v.models.runners.neopp.neopp_runner import NeoppRunner  # noqa: F401
-from lightx2v.models.runners.qwen_image.qwen_image_runner import QwenImageRunner  # noqa: F401
-from lightx2v.models.runners.seedvr.seedvr_runner import SeedVRRunner  # noqa: F401
-from lightx2v.models.runners.wan.wan_animate_runner import WanAnimateRunner  # noqa: F401
-from lightx2v.models.runners.wan.wan_audio_runner import Wan22AudioRunner, WanAudioRunner  # noqa: F401
-from lightx2v.models.runners.wan.wan_distill_runner import WanDistillRunner  # noqa: F401
-from lightx2v.models.runners.wan.wan_lingbot_fast_runner import LingbotFastRunner  # noqa: F401
-from lightx2v.models.runners.wan.wan_matrix_game2_runner import WanSFMtxg2Runner  # noqa: F401
-from lightx2v.models.runners.wan.wan_matrix_game3_runner import WanMatrixGame3Runner  # noqa: F401
-from lightx2v.models.runners.wan.wan_runner import Wan22MoeRunner, WanRunner  # noqa: F401
-from lightx2v.models.runners.wan.wan_sf_runner import WanSFRunner  # noqa: F401
-from lightx2v.models.runners.wan.wan_vace_runner import WanVaceRunner  # noqa: F401
-from lightx2v.models.runners.worldmirror.worldmirror_runner import WorldMirrorRunner  # noqa: F401
-from lightx2v.models.runners.worldplay.worldplay_ar_runner import WorldPlayARRunner  # noqa: F401
-from lightx2v.models.runners.worldplay.worldplay_bi_runner import WorldPlayBIRunner  # noqa: F401
-from lightx2v.models.runners.worldplay.worldplay_distill_runner import WorldPlayDistillRunner  # noqa: F401
-from lightx2v.models.runners.z_image.z_image_runner import ZImageRunner  # noqa: F401
 from lightx2v.utils.input_info import init_empty_input_info, update_input_info_from_dict
 from lightx2v.utils.registry_factory import RUNNER_REGISTER
 from lightx2v.utils.set_config import set_config, set_parallel_config
@@ -42,6 +19,57 @@ from lightx2v_platform.registry_factory import PLATFORM_DEVICE_REGISTER
 from lightx2v.rl.sde import SdeRolloutConfig
 from lightx2v.rl.weights import closure as weight_closure
 from lightx2v.rl.weights import update_weights as update_model_weights
+
+
+# Import only the selected runner.  Importing every optional backend at module
+# load time made the NeoPP serving path depend on unrelated WorldMirror, audio,
+# UI, and video packages.  The registry contract stays unchanged: importing a
+# runner module executes its existing RUNNER_REGISTER decorator.
+_RUNNER_MODULES = {
+    "bagel": "lightx2v.models.runners.bagel.bagel_runner",
+    "flux2_dev": "lightx2v.models.runners.flux2.flux2_runner",
+    "flux2_klein": "lightx2v.models.runners.flux2.flux2_runner",
+    "hunyuan_video_1.5": "lightx2v.models.runners.hunyuan_video.hunyuan_video_15_runner",
+    "hunyuan_video_1.5_distill": "lightx2v.models.runners.hunyuan_video.hunyuan_video_15_distill_runner",
+    "lingbot_world": "lightx2v.models.runners.wan.wan_runner",
+    "lingbot_world_fast": "lightx2v.models.runners.wan.wan_lingbot_fast_runner",
+    "longcat_image": "lightx2v.models.runners.longcat_image.longcat_image_runner",
+    "ltx2": "lightx2v.models.runners.ltx2.ltx2_runner",
+    "neopp": "lightx2v.models.runners.neopp.neopp_runner",
+    "qwen_image": "lightx2v.models.runners.qwen_image.qwen_image_runner",
+    "seedvr2": "lightx2v.models.runners.seedvr.seedvr_runner",
+    "seko_talk": "lightx2v.models.runners.wan.wan_audio_runner",
+    "wan2.1": "lightx2v.models.runners.wan.wan_runner",
+    "wan2.1_distill": "lightx2v.models.runners.wan.wan_distill_runner",
+    "wan2.1_mean_flow_distill": "lightx2v.models.runners.wan.wan_distill_runner",
+    "wan2.1_sf": "lightx2v.models.runners.wan.wan_sf_runner",
+    "wan2.1_sf_mtxg2": "lightx2v.models.runners.wan.wan_matrix_game2_runner",
+    "wan2.1_vace": "lightx2v.models.runners.wan.wan_vace_runner",
+    "wan2.2": "lightx2v.models.runners.wan.wan_runner",
+    "wan2.2_animate": "lightx2v.models.runners.wan.wan_animate_runner",
+    "wan2.2_audio": "lightx2v.models.runners.wan.wan_audio_runner",
+    "wan2.2_matrix_game3": "lightx2v.models.runners.wan.wan_matrix_game3_runner",
+    "wan2.2_moe": "lightx2v.models.runners.wan.wan_runner",
+    "wan2.2_moe_audio": "lightx2v.models.runners.wan.wan_audio_runner",
+    "wan2.2_moe_distill": "lightx2v.models.runners.wan.wan_distill_runner",
+    "wan2.2_moe_vace": "lightx2v.models.runners.wan.wan_vace_runner",
+    "worldmirror": "lightx2v.models.runners.worldmirror.worldmirror_runner",
+    "worldplay_ar": "lightx2v.models.runners.worldplay.worldplay_ar_runner",
+    "worldplay_bi": "lightx2v.models.runners.worldplay.worldplay_bi_runner",
+    "worldplay_distill": "lightx2v.models.runners.worldplay.worldplay_distill_runner",
+    "z_image": "lightx2v.models.runners.z_image.z_image_runner",
+}
+
+
+def _ensure_runner_registered(model_cls):
+    if model_cls in RUNNER_REGISTER:
+        return
+    module = _RUNNER_MODULES.get(model_cls)
+    if module is None:
+        raise KeyError(f"unsupported model_cls {model_cls!r}; known runners: {sorted(_RUNNER_MODULES)}")
+    importlib.import_module(module)
+    if model_cls not in RUNNER_REGISTER:
+        raise RuntimeError(f"runner module {module!r} did not register {model_cls!r}")
 
 
 def dict_like(cls):
@@ -533,6 +561,7 @@ class LightX2VPipeline:
 
     def _init_runner(self, config):
         torch.set_grad_enabled(False)
+        _ensure_runner_registered(config["model_cls"])
         runner = RUNNER_REGISTER[config["model_cls"]](config)
         runner.init_modules()
         return runner
