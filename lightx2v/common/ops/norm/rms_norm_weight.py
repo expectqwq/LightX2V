@@ -460,6 +460,25 @@ class RMSWeightFusedQKNorm3DRope:
         self._w_kt = weight_dict[self.k_weight_name_t]
         self._w_khw = weight_dict[self.k_weight_name_hw]
 
+    def state_dict(self, destination=None):
+        """Expose the four source tensors used by the fused inference kernel.
+
+        This object is registered as a child of ``WeightModule`` but is not a
+        ``WeightModule`` subclass itself.  The tensors still belong to the
+        policy closure and must be visible to online RL weight updates.
+        """
+        if destination is None:
+            destination = {}
+        for name, tensor in (
+            (self.q_weight_name_t, self._w_qt),
+            (self.q_weight_name_hw, self._w_qhw),
+            (self.k_weight_name_t, self._w_kt),
+            (self.k_weight_name_hw, self._w_khw),
+        ):
+            if tensor is not None:
+                destination[name] = tensor
+        return destination
+
     def apply(self, q, k, cos_sin):
         """In-place fused dual-RMSNorm + 3D Neox-RoPE on Q and K in a single kernel launch.
 

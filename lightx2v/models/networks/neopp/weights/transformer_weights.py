@@ -10,6 +10,7 @@ from lightx2v.common.ops.attn import FlashAttn2Weight, FlashAttn3Weight  # noqa:
 from lightx2v.common.ops.norm.rms_norm_weight import RMSWeightFusedQKNorm3DRope
 from lightx2v.utils.registry_factory import (
     ATTN_WEIGHT_REGISTER,
+    CONV2D_WEIGHT_REGISTER,
     MM_WEIGHT_REGISTER,
     RMS_WEIGHT_REGISTER,
 )
@@ -42,7 +43,7 @@ class NeoppTransformerWeights(WeightModule):
 
         self.add_module(
             "fm_head",
-            NeoppFmHeadWeights(self.mm_type),
+            NeoppFmHeadWeights(config),
         )
 
 
@@ -184,8 +185,28 @@ class NeoppMlpWeights(WeightModule):
 
 
 class NeoppFmHeadWeights(WeightModule):
-    def __init__(self, mm_type):
+    def __init__(self, config):
         super().__init__()
+        self.use_pixel_head = config.get("use_pixel_head", False)
+        if self.use_pixel_head:
+            self.add_module(
+                "conv1",
+                CONV2D_WEIGHT_REGISTER["Default"](
+                    "fm_modules.fm_head.conv1.weight",
+                    "fm_modules.fm_head.conv1.bias",
+                    padding=1,
+                ),
+            )
+            self.add_module(
+                "conv2",
+                CONV2D_WEIGHT_REGISTER["Default"](
+                    "fm_modules.fm_head.conv2.weight",
+                    "fm_modules.fm_head.conv2.bias",
+                    padding=1,
+                ),
+            )
+            return
+
         self.add_module(
             "fm_head_0",
             MM_WEIGHT_REGISTER["Default"](

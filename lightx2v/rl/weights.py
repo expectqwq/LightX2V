@@ -9,7 +9,7 @@ import torch
 
 
 def tensor_checksum(tensor: torch.Tensor) -> str:
-    value = tensor.detach().contiguous().cpu()
+    value = tensor.detach().contiguous().reshape(-1).cpu()
     return hashlib.sha256(value.view(torch.uint8).numpy().tobytes()).hexdigest()
 
 
@@ -19,7 +19,17 @@ def model_state(model) -> dict[str, torch.Tensor]:
     model.transformer_weights.state_dict(state)
     if hasattr(model, "post_weight"):
         model.post_weight.state_dict(state)
-    return {name: tensor for name, tensor in state.items() if isinstance(tensor, torch.Tensor)}
+    return {
+        name: tensor
+        for name, tensor in state.items()
+        if isinstance(tensor, torch.Tensor)
+        # RMSWeight initializes an inactive LoRA/diff branch with a scalar
+        # zero.  It is runtime state rather than a checkpoint parameter and
+        # must not make a strict full-checkpoint closure impossible.  A real
+        # registered diff has the parameter's non-scalar shape and remains in
+        # the closure.
+        and not (name.endswith((".diff", ".diff_b")) and tensor.ndim == 0)
+    }
 
 
 def closure(model) -> dict[str, dict[str, object]]:

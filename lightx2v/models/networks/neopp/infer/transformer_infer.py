@@ -25,6 +25,9 @@ class NeoppTransformerInfer(BaseTransformerInfer):
         self.num_key_value_groups = self.num_heads // self.num_kv_heads
         self.scaling = self.head_dim**-0.5
         self.use_triton_qknorm_rope = config.get("use_triton_qknorm_rope", True)
+        self.use_pixel_head = config.get("use_pixel_head", False)
+        self.patch_size = config.get("patch_size", 16)
+        self.merge_size = 2
         self.version = config.get("version", "moe")
         if self.version == "moe":
             self.num_experts_per_tok = llm_config["num_experts_per_tok"]
@@ -36,6 +39,8 @@ class NeoppTransformerInfer(BaseTransformerInfer):
             self.seq_p_group = self.config.get("device_mesh").get_group(mesh_dim="seq_p")
         else:
             self.seq_p_group = None
+        if self.use_pixel_head and self.seq_p_group is not None:
+            raise ValueError("NeoPP pixel-head inference currently requires seq_parallel=false")
         self.kv_cache = KVCacheManager()
 
     @torch.no_grad()
@@ -71,7 +76,7 @@ class NeoppTransformerInfer(BaseTransformerInfer):
             hidden_states = self._decoder_layer(block_weight, layer_idx, hidden_states, cos_sin)
 
         hidden_states = weights.norm_mot_gen.apply(hidden_states)
-        hidden_states = self._fm_head(weights.fm_head, hidden_states)
+        hidden_states = self._fm_head(weights.fm_head, hidden_states, pre_infer_out)
         return hidden_states.unsqueeze(0)
 
     # @ProfilingContext4DebugL1("Decoder Layer")
@@ -211,7 +216,42 @@ class NeoppTransformerInfer(BaseTransformerInfer):
         return output
 
     # @ProfilingContext4DebugL1("FM Head")
-    def _fm_head(self, fm_head_w, hidden_states):
+    def _fm_head(self, fm_head_w, hidden_states, pre_infer_out):
+        if self.use_pixel_head:
+            image = self.scheduler.image_prediction
+            output_patch_size = self.patch_size * self.merge_size
+            token_h = image.shape[-2] // output_patch_size
+            token_w = image.shape[-1] // output_patch_size
+            expected_tokens = token_h * token_w
+            if hidden_states.shape[0] != expected_tokens or pre_infer_out.image_token_num != expected_tokens:
+                raise ValueError(
+                    "NeoPP pixel-head token/grid mismatch: "
+                    f"hidden={hidden_states.shape[0]}, pre_infer={pre_infer_out.image_token_num}, "
+                    f"grid={token_h}x{token_w}"
+                )
+
+            # Match SenseNova-U1.5 ConvDecoder exactly:
+            # hidden grid -> PS(2) -> conv/GELU -> PS(2) -> conv -> PS(8),
+            # then repack pixels into the scheduler's 32x32 patch tokens.
+            pixel_states = hidden_states.reshape(1, token_h, token_w, -1).permute(0, 3, 1, 2).contiguous()
+            pixel_states = F.pixel_shuffle(pixel_states, 2)
+            pixel_states = F.gelu(fm_head_w.conv1.apply(pixel_states))
+            pixel_states = F.pixel_shuffle(pixel_states, 2)
+            pixel_states = fm_head_w.conv2.apply(pixel_states)
+            pixel_states = F.pixel_shuffle(pixel_states, 8)
+
+            batch = pixel_states.shape[0]
+            patch_tokens = pixel_states.reshape(
+                batch,
+                3,
+                token_h,
+                output_patch_size,
+                token_w,
+                output_patch_size,
+            )
+            patch_tokens = torch.einsum("bchpwq->bhwpqc", patch_tokens)
+            return patch_tokens.contiguous().reshape(batch * expected_tokens, output_patch_size**2 * 3)
+
         hidden_states = fm_head_w.fm_head_0.apply(hidden_states)
         hidden_states = F.gelu(hidden_states)
         hidden_states = fm_head_w.fm_head_2.apply(hidden_states)
