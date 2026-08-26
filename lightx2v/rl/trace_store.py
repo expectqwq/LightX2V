@@ -16,7 +16,7 @@ _BUNDLE_RE = re.compile(r"^[a-f0-9]{32}$")
 
 
 class TraceStore:
-    def __init__(self, root: str | os.PathLike[str] = "/tmp/mova_rl_traces", ttl_seconds: int = 3600):
+    def __init__(self, root: str | os.PathLike[str] = "/dev/shm/mova_rl_traces", ttl_seconds: int = 3600):
         self.root = Path(root)
         self.ttl_seconds = int(ttl_seconds)
         if self.ttl_seconds <= 0:

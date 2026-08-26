@@ -171,7 +171,11 @@ class HybridSdeState:
         self.trace.old_log_probs.append(recompute_log_prob(next_sample.float(), mean, scale).detach())
         self.trace.timesteps.append(t.float().detach())
         self.trace.next_timesteps.append(t_next.float().detach())
-        self.trace.scales.append(scale.expand_as(mean).detach())
+        # ``scale`` is broadcastable over the latent.  Expanding it here made
+        # every trace carry one redundant image-sized tensor per selected SDE
+        # step (roughly 25% of the bundle) even though replay can broadcast the
+        # compact value exactly.
+        self.trace.scales.append(scale.detach())
         self.trace.indices.append(index)
         return next_sample
 
