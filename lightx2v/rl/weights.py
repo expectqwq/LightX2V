@@ -33,8 +33,15 @@ def model_state(model) -> dict[str, torch.Tensor]:
 
 
 def closure(model) -> dict[str, dict[str, object]]:
+    """Describe the online-update closure without reading weights back to CPU.
+
+    Update manifests and receiver ACKs checksum every incoming tensor/bucket.
+    Checksumming the already-loaded model here adds no safety property and
+    stalls group initialization on a full NeoPP device-to-host copy.
+    """
+
     return {
-        name: {"shape": list(tensor.shape), "dtype": str(tensor.dtype), "checksum": tensor_checksum(tensor)}
+        name: {"shape": list(tensor.shape), "dtype": str(tensor.dtype)}
         for name, tensor in sorted(model_state(model).items())
     }
 
