@@ -2,15 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Iterable, Mapping
 
 import torch
-
-
-def tensor_checksum(tensor: torch.Tensor) -> str:
-    value = tensor.detach().contiguous().reshape(-1).cpu()
-    return hashlib.sha256(value.view(torch.uint8).numpy().tobytes()).hexdigest()
 
 
 def model_state(model) -> dict[str, torch.Tensor]:
@@ -35,9 +29,8 @@ def model_state(model) -> dict[str, torch.Tensor]:
 def closure(model) -> dict[str, dict[str, object]]:
     """Describe the online-update closure without reading weights back to CPU.
 
-    Update manifests and receiver ACKs checksum every incoming tensor/bucket.
-    Checksumming the already-loaded model here adds no safety property and
-    stalls group initialization on a full NeoPP device-to-host copy.
+    Shape and dtype metadata are sufficient for routing the already-loaded
+    model.  The data plane never reads live weights back to CPU.
     """
 
     return {
@@ -78,6 +71,5 @@ def update_weights(model, tensors: Mapping[str, torch.Tensor] | Iterable[tuple[s
     return {
         "updated": sorted(updated),
         "ignored": unknown,
-        "checksums": {name: tensor_checksum(current[name]) for name in sorted(updated)},
         "closure_size": len(current),
     }
